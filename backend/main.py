@@ -1,4 +1,5 @@
-import os
+﻿import os
+import gc
 import io
 import uuid
 from pathlib import Path
@@ -58,7 +59,10 @@ def ai_rgb_geotiff(raw_tiff: bytes, scale=4):
     This is an AI visual-SR demonstration, not the final multispectral DEEPSRM model.
     The full multispectral GeoTIFF remains separately available from the Lanczos baseline.
     """
+    import gc
+
     ensure_edsr_model()
+
     sr = cv2.dnn_superres.DnnSuperResImpl_create()
     sr.readModel(str(EDSR_MODEL_PATH))
     sr.setModel("edsr", scale)
@@ -66,26 +70,75 @@ def ai_rgb_geotiff(raw_tiff: bytes, scale=4):
     with MemoryFile(raw_tiff) as mem:
         with mem.open() as src:
             rgb = src.read([3, 2, 1]).astype(np.float32)
-            valid = np.nan_to_num(rgb)
-            positives = valid[valid > 0]
-            p98 = np.percentile(positives, 98) if positives.size else 1.0
-            x = np.clip(valid / max(p98, 1e-6), 0, 1)
-            bgr = (x[::-1].transpose(1, 2, 0) * 255).astype(np.uint8)
-            out_bgr = sr.upsample(bgr)
-            out_rgb = out_bgr[:, :, ::-1].transpose(2, 0, 1).astype(np.uint8)
 
-            h, w = rgb.shape[1:]
+            np.nan_to_num(rgb, copy=False)
+
+            positives = rgb[rgb > 0]
+            p98 = np.percentile(positives, 98) if positives.size else 1.0
+
+            del positives
+            gc.collect()
+
+            x = np.clip(
+                rgb / max(p98, 1e-6),
+                0,
+                1
+            )
+
+            del rgb
+            gc.collect()
+
+            bgr = (
+                x[::-1]
+                .transpose(1, 2, 0)
+                * 255
+            ).astype(np.uint8)
+
+            del x
+            gc.collect()
+
+            out_bgr = sr.upsample(bgr)
+
+            del bgr
+            del sr
+            gc.collect()
+
+            out_rgb = (
+                out_bgr[:, :, ::-1]
+                .transpose(2, 0, 1)
+                .astype(np.uint8)
+            )
+
+            del out_bgr
+            gc.collect()
+
+            h, w = out_rgb.shape[1:]
+
             profile = src.profile.copy()
             profile.update(
-                count=3, dtype="uint8", height=h * scale, width=w * scale,
-                transform=src.transform * src.transform.scale(1/scale, 1/scale),
+                count=3,
+                dtype="uint8",
+                height=h,
+                width=w,
+                transform=src.transform * src.transform.scale(
+                    1 / scale,
+                    1 / scale
+                ),
                 compress="deflate"
             )
+
             result = io.BytesIO()
+
             with rasterio.open(result, "w", **profile) as dst:
                 dst.write(out_rgb)
-            return result.getvalue()
 
+            output = result.getvalue()
+
+            del out_rgb
+            del result
+            gc.collect()
+
+            return output
 def source_preview(raw_tiff: bytes):
     return make_preview_from_geotiff(raw_tiff)
 
@@ -155,17 +208,40 @@ def stac_search(req: SentinelSearch):
     payload = {
         "collections": ["sentinel-2-l2a"],
         "datetime": f"{req.start_date}T00:00:00Z/{req.end_date}T23:59:59Z",
-        "limit": req.limit,
+        "limit": min(max(req.limit, 1), 12),
         "intersects": point_geometry(req.latitude, req.longitude),
-        "query": {"eo:cloud_cover": {"lte": req.max_cloud}},
-        "sortby": [{"field": "properties.datetime", "direction": "desc"}],
+        "query": {
+            "eo:cloud_cover": {
+                "lte": req.max_cloud
+            }
+        },
+        "sortby": [
+            {
+                "field": "properties.datetime",
+                "direction": "desc"
+            }
+        ]
     }
-    r = requests.post(STAC_URL, json=payload, timeout=30)
+
+    headers = {
+        "Accept": "application/geo+json",
+        "Content-Type": "application/json",
+        "User-Agent": "DEEPSRM-SIH26142/1.0"
+    }
+
+    r = requests.post(
+        STAC_URL,
+        json=payload,
+        headers=headers,
+        timeout=60
+    )
+
     if not r.ok:
         raise RuntimeError(
             f"Copernicus STAC search error {r.status_code}: "
             f"{r.text[:2000]}"
         )
+
     return r.json()
 
 def make_evalscript():
@@ -370,24 +446,44 @@ def sentinel_search(req: SentinelSearch):
 
 @app.post("/api/sentinel/process")
 def sentinel_process(req: SentinelProcessRequest):
+    import gc
+
     try:
         source = process_sentinel(req)
-        multispectral = sr_baseline_geotiff(source, scale=4)
+
+        # Run EDSR first so the multispectral output is not occupying
+        # memory during the neural super-resolution peak.
         ai_rgb = ai_rgb_geotiff(source, scale=4)
-        original = source_preview(source)
+
+        # EDSR no longer needs the source after completion.
+        gc.collect()
+
+        # Now create the separate multispectral geospatial baseline.
+        multispectral = sr_baseline_geotiff(source, scale=4)
+
+        # Release the raw Sentinel source.
+        del source
+        gc.collect()
+
+        original = source_preview(ai_rgb)
         enhanced = make_preview_from_geotiff(ai_rgb)
+
     except Exception as exc:
+        gc.collect()
         raise HTTPException(502, f"Sentinel/AI processing failed: {exc}")
 
     job_id = str(uuid.uuid4())
+
     jobs[job_id] = {
         "geotiff": multispectral,
         "ai_rgb": ai_rgb,
         "preview": enhanced,
         "original_preview": original,
-        "source": source,
         "mode": "edsr-x4-rgb-plus-multispectral-baseline",
     }
+
+    gc.collect()
+
     return {
         "id": job_id,
         "mode": "edsr-x4-rgb-plus-multispectral-baseline",
@@ -463,3 +559,4 @@ async def upload_process(file: UploadFile = File(...)):
         "original_preview": f"/api/result/{job_id}/original-preview",
         "neural_model": "EDSR x4 pretrained RGB visual SR",
     }
+

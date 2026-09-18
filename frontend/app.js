@@ -1,4 +1,4 @@
-const API="https://deepsrm-sih26142.onrender.com";
+const API="http://127.0.0.1:8000";
 
 const steps=[
 ["Scene validation","Checking the selected Sentinel-2 request"],
@@ -114,7 +114,7 @@ window.processSelected=async(body)=>{
   try{
     await runPipeline();
     const r=await fetch(API+"/api/sentinel/process",{
-      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,size:512})
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,size:256})
     });
     const data=await r.json();
     if(!r.ok)throw Error(data.detail||"Processing failed");
