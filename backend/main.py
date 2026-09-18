@@ -245,16 +245,15 @@ def stac_search(req: SentinelSearch):
     return r.json()
 
 def make_evalscript():
-    """Return Sentinel-2 RGB reflectance with SCL cloud masking."""
-    return """//VERSION=3
-
+    return """
+//VERSION=3
 function setup() {
   return {
     input: ["B02", "B03", "B04", "SCL"],
     output: {
       id: "default",
       bands: 3,
-      sampleType: SampleType.FLOAT32
+      sampleType: SampleType.UINT8
     }
   };
 }
@@ -265,9 +264,9 @@ function evaluatePixel(sample) {
   }
 
   return [
-    sample.B04,
-    sample.B03,
-    sample.B02
+    Math.min(255, Math.max(0, sample.B04 * 255)),
+    Math.min(255, Math.max(0, sample.B03 * 255)),
+    Math.min(255, Math.max(0, sample.B02 * 255))
   ];
 }
 """
