@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DEEPSRM — Satellite Super Resolution</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <a class="brand" href="#home">
+        <span class="brand-mark">DS</span>
+        <span><b>DEEPSRM</b><small>APEX WARRIORS · SIH26142</small></span>
+      </a>
+      <nav>
+        <a href="#home">Home</a>
+        <a href="#process">Process</a>
+        <a href="#sentinel">Sentinel-2</a>
+        <a href="#dashboard">Dashboard</a>
+        <a href="#technology">Technology</a>
+        <a href="#research">Research</a>
+      </nav>
+      <span id="apiBadge" class="status-dot">● API checking</span>
+    </header>
+
+    <main>
+      <section id="home" class="hero section">
+        <div class="hero-copy">
+          <div class="eyebrow">SMART INDIA HACKATHON 2026 · SPACE TECHNOLOGY</div>
+          <h1>Turn medium-resolution satellite imagery into a <span>sharper spatial representation.</span></h1>
+          <p class="lead">DEEPSRM is an AI-powered Sub-Pixel Satellite Resolution Enhancement Engine for Sentinel-2 imagery, designed for GIS-ready analysis.</p>
+          <div class="hero-actions">
+            <a class="btn primary" href="#process">Start DEEPSRM →</a>
+            <a class="btn ghost" href="#sentinel">Explore Sentinel-2</a>
+          </div>
+          <div class="hero-stats">
+            <div><strong>10m → 2.5m</strong><span>target representation</span></div>
+            <div><strong>RGB · NIR · RedEdge</strong><span>multispectral focus</span></div>
+            <div><strong>GeoTIFF</strong><span>GIS-ready output</span></div>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="orbit"></div>
+          <div class="sat-card">
+            <div class="sat-header"><span>EARTH OBSERVATION</span><span>LIVE UI</span></div>
+            <div class="map-art">
+              <div class="grid"></div>
+              <div class="land land1"></div><div class="land land2"></div>
+              <span class="pin p1"></span><span class="pin p2"></span><span class="pin p3"></span>
+            </div>
+            <div class="sat-footer"><span>Sentinel-2 L2A</span><b>DEEPSRM</b><span>4× target</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section problem-grid">
+        <div class="section-label">01 · WHY DEEPSRM</div>
+        <div>
+          <h2>Open imagery is valuable. Fine spatial detail is the gap.</h2>
+          <div class="cards three">
+            <article class="card"><span class="icon">01</span><h3>Medium resolution</h3><p>Sentinel-2 provides open multispectral imagery, but many applications need finer spatial boundaries.</p></article>
+            <article class="card"><span class="icon">02</span><h3>Interpolation is limited</h3><p>Bilinear and bicubic upscaling can make images larger without recovering meaningful spatial structure.</p></article>
+            <article class="card"><span class="icon">03</span><h3>Commercial imagery costs</h3><p>Native high-resolution imagery can add procurement cost for large-scale monitoring.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="process" class="section dark-section">
+        <div class="section-label">02 · DEEPSRM PROCESSING</div>
+        <div class="section-head"><div><h2>Upload. Enhance. Inspect.</h2><p>Use a satellite-compatible raster for the prototype. GeoTIFF/TIFF is preferred.</p></div><span class="chip">DEMO MODEL ACTIVE</span></div>
+
+        <div class="workspace">
+          <div class="upload-panel">
+            <input id="fileInput" type="file" accept=".tif,.tiff,.jp2,.png,.jpg,.jpeg" hidden>
+            <div id="dropzone" class="dropzone">
+              <div class="upload-icon">↑</div>
+              <h3>Drop satellite image here</h3>
+              <p>GeoTIFF · TIFF · JP2 · PNG · JPG</p>
+              <button class="btn primary" id="chooseBtn">Choose file</button>
+              <small>For the live AI pipeline, use multispectral satellite data.</small>
+            </div>
+            <div id="fileInfo" class="file-info hidden"></div>
+            <button id="processBtn" class="btn process-btn hidden">Run DEEPSRM →</button>
+          </div>
+
+          <div class="pipeline-panel">
+            <div class="pipeline-title"><span>PROCESSING PIPELINE</span><span id="pipelineState">READY</span></div>
+            <div id="pipeline"></div>
+          </div>
+        </div>
+
+        <div id="resultPanel" class="result-panel hidden">
+          <div class="result-head"><div><span class="eyebrow">RESULT</span><h2>Super-resolved representation</h2></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a id="downloadBtn" class="btn ghost" href="#">Download Multispectral GeoTIFF</a><a id="aiDownloadBtn" class="btn ghost hidden" href="#">Download AI RGB GeoTIFF</a></div></div>
+          <div class="compare">
+            <div class="image-box"><span>ORIGINAL</span><img id="originalImg" alt="Original preview"></div>
+            <div class="image-box enhanced"><span>DEEPSRM OUTPUT · DEMO</span><img id="enhancedImg" alt="Enhanced preview"></div>
+          </div>
+          <div class="metrics">
+            <div><small>INPUT</small><strong>10m–20m</strong></div>
+            <div><small>TARGET</small><strong>2.5m</strong></div>
+            <div><small>PSNR</small><strong>DEMO</strong></div>
+            <div><small>SSIM</small><strong>DEMO</strong></div>
+            <div><small>SAM</small><strong>DEMO</strong></div>
+          </div>
+          <p class="notice">⚠ Demo notice: PSNR, SSIM and SAM are not presented as measured results in this prototype. Connect the trained DEEPSRM model and reference imagery to compute validated metrics.</p>
+        </div>
+      </section>
+
+      <section id="sentinel" class="section">
+        <div class="section-label">03 · SENTINEL-2 EXPLORER</div>
+        <div class="section-head"><div><h2>Find open Sentinel-2 scenes</h2><p>Search the Copernicus Data Space STAC catalogue by location, date and cloud cover.</p></div><span class="chip">COPERNICUS STAC</span></div>
+        <div class="search-form">
+          <label>Latitude<input id="lat" type="number" step="any" value="13.0827"></label>
+          <label>Longitude<input id="lon" type="number" step="any" value="80.2707"></label>
+          <label>Start date<input id="startDate" type="date"></label>
+          <label>End date<input id="endDate" type="date"></label>
+          <label>Max cloud %<input id="cloud" type="number" min="0" max="100" value="30"></label>
+          <button class="btn primary" id="searchBtn">Search scenes</button>
+        </div>
+        <div id="sentinelResults" class="scene-grid"><div class="empty">Enter a location and search the Copernicus catalogue.</div></div>
+      </section>
+
+      <section id="dashboard" class="section dashboard-section">
+        <div class="section-label">04 · SYSTEM DASHBOARD</div>
+        <h2>DEEPSRM monitoring</h2>
+        <div class="dashboard-grid">
+          <div class="dash-card"><small>PIPELINE</small><strong>● ONLINE</strong><p>FastAPI processing service</p></div>
+          <div class="dash-card"><small>DATA SOURCE</small><strong>Sentinel-2 L2A</strong><p>Copernicus Data Space</p></div>
+          <div class="dash-card"><small>AI ENGINE</small><strong>SwinIR / ESRGAN</strong><p>Architecture target from SIH deck</p></div>
+          <div class="dash-card"><small>OUTPUT</small><strong>GeoTIFF</strong><p>CRS-preserving production target</p></div>
+        </div>
+      </section>
+
+      <section id="technology" class="section dark-section">
+        <div class="section-label">05 · TECHNICAL APPROACH</div>
+        <h2>From satellite pixels to GIS-ready output.</h2>
+        <div class="flow">
+          <div>INPUT / DATA<small>Sentinel-2 L2A<br>GeoTIFF / JP2</small></div><i>→</i>
+          <div>PROCESSING<small>Cloud mask<br>Normalization<br>256×256 patches</small></div><i>→</i>
+          <div>CORE ENGINE<small>SwinIR / ESRGAN<br>PixelShuffle<br>Spectral Loss</small></div><i>→</i>
+          <div>APPLICATION<small>FastAPI<br>Web visualizer<br>GIS tools</small></div><i>→</i>
+          <div>OUTPUT<small>2.5m target raster<br>GeoTIFF<br>Metrics</small></div>
+        </div>
+        <div class="tech-list">
+          <span>Python</span><span>FastAPI</span><span>PyTorch</span><span>OpenCV</span><span>GDAL</span><span>Rasterio</span><span>PostGIS</span><span>SwinIR</span><span>ESRGAN</span><span>ONNX/TensorRT</span>
+        </div>
+      </section>
+
+      <section id="research" class="section">
+        <div class="section-label">06 · RESEARCH & TEAM</div>
+        <div class="research-grid">
+          <div><h2>Built for SIH26142.</h2><p>Deep Learning Based Super Resolution Mapping (SRM) from Medium Resolution Satellite Imageries.</p><div class="team"><b>APEX WARRIORS</b><span>Sanjai K · Siva Bala · Dravid · Lakshan · Srija · Joyshitha</span></div></div>
+          <div class="refs">
+            <h3>References from our SIH deck</h3>
+            <a href="https://arxiv.org/abs/2108.10257" target="_blank">SwinIR — Image Restoration Using Swin Transformer ↗</a>
+            <a href="https://arxiv.org/abs/1809.00219" target="_blank">ESRGAN — Enhanced Super-Resolution GAN ↗</a>
+            <a href="https://dataspace.copernicus.eu/" target="_blank">Copernicus Data Space Ecosystem ↗</a>
+            <a href="https://sih.gov.in/sih2026PS" target="_blank">SIH 2026 Problem Statements ↗</a>
+          </div>
+        </div>
+        <footer>DEEPSRM · APEX WARRIORS · SIH26142 · Prototype v0.1</footer>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
