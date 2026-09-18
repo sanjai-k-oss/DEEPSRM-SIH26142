@@ -1,4 +1,4 @@
-﻿import os
+import os
 import gc
 import io
 import uuid
@@ -157,7 +157,7 @@ class SentinelProcessRequest(BaseModel):
     start_date: str
     end_date: str
     max_cloud: float = 30.0
-    size: int = 512
+    size: int = 128
 
 def get_token():
     """Get a Copernicus Data Space OAuth2 client-credentials token."""
@@ -558,4 +558,5 @@ async def upload_process(file: UploadFile = File(...)):
         "original_preview": f"/api/result/{job_id}/original-preview",
         "neural_model": "EDSR x4 pretrained RGB visual SR",
     }
+
 

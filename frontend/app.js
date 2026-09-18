@@ -114,7 +114,7 @@ window.processSelected=async(body)=>{
   try{
     await runPipeline();
     const r=await fetch(API+"/api/sentinel/process",{
-      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,size:256})
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,size:128})
     });
     const data=await r.json();
     if(!r.ok)throw Error(data.detail||"Processing failed");
@@ -155,3 +155,4 @@ processBtn?.addEventListener("click",async()=>{
     document.getElementById("pipelineState").textContent="COMPLETE";
   }catch(e){alert(e.message)}
 });
+
