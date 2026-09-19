@@ -38,6 +38,45 @@ TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/
 
 jobs = {}
 
+TEMP_DIR = BASE_DIR / "temp_results"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_temp_result(job_id: str, name: str, data: bytes) -> str:
+    path = TEMP_DIR / f"{job_id}_{name}"
+    path.write_bytes(data)
+    return str(path)
+
+def delete_temp_file(path):
+    try:
+        if path:
+            Path(path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def cleanup_old_temp_files(max_age_seconds=1800):
+    """Delete temporary result files older than 30 minutes."""
+    import time
+
+    now = time.time()
+
+    try:
+        for path in TEMP_DIR.iterdir():
+            if not path.is_file():
+                continue
+
+            try:
+                age = now - path.stat().st_mtime
+
+                if age > max_age_seconds:
+                    path.unlink(missing_ok=True)
+
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
 EDSR_MODEL_URL = "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb"
 EDSR_MODEL_PATH = BASE_DIR / "models" / "EDSR_x4.pb"
 
@@ -447,37 +486,58 @@ def sentinel_search(req: SentinelSearch):
 def sentinel_process(req: SentinelProcessRequest):
     import gc
 
+    # Remove abandoned temporary results older than 30 minutes.
+    cleanup_old_temp_files()
+
+    job_id = str(uuid.uuid4())
+
     try:
+        # Download the Sentinel-2 source only once.
         source = process_sentinel(req)
 
         # Run EDSR first so the multispectral output is not occupying
         # memory during the neural super-resolution peak.
         ai_rgb = ai_rgb_geotiff(source, scale=4)
 
-        # EDSR no longer needs the source after completion.
         gc.collect()
 
-        # Now create the separate multispectral geospatial baseline.
+        # Reuse the same Sentinel source for the geospatial
+        # multispectral baseline instead of downloading it again.
         multispectral = sr_baseline_geotiff(source, scale=4)
 
-        # Release the raw Sentinel source.
         del source
         gc.collect()
 
         original = source_preview(ai_rgb)
         enhanced = make_preview_from_geotiff(ai_rgb)
 
+        # Save completed results to disk instead of keeping large
+        # TIFF/PNG byte objects in Render RAM.
+        geotiff_path = save_temp_result(job_id, "multispectral.tif", multispectral)
+        ai_rgb_path = save_temp_result(job_id, "ai_rgb.tif", ai_rgb)
+        preview_path = save_temp_result(job_id, "preview.png", enhanced)
+        original_preview_path = save_temp_result(
+            job_id,
+            "original_preview.png",
+            original
+        )
+
+        # Release large objects immediately.
+        del multispectral
+        del ai_rgb
+        del enhanced
+        del original
+        gc.collect()
+
     except Exception as exc:
         gc.collect()
         raise HTTPException(502, f"Sentinel/AI processing failed: {exc}")
 
-    job_id = str(uuid.uuid4())
-
     jobs[job_id] = {
-        "geotiff": multispectral,
-        "ai_rgb": ai_rgb,
-        "preview": enhanced,
-        "original_preview": original,
+        "geotiff_path": geotiff_path,
+        "ai_rgb_path": ai_rgb_path,
+        "preview_path": preview_path,
+        "original_preview_path": original_preview_path,
         "mode": "edsr-x4-rgb-plus-multispectral-baseline",
     }
 
@@ -487,7 +547,7 @@ def sentinel_process(req: SentinelProcessRequest):
         "id": job_id,
         "mode": "edsr-x4-rgb-plus-multispectral-baseline",
         "input_resolution": "Sentinel-2 L2A 10m/20m source bands",
-        "target_resolution": "4× output grid (2.5m for 10m bands; 5m for 20m bands)",
+        "target_resolution": "4x output grid (2.5m for 10m bands; 5m for 20m bands)",
         "neural_model": "EDSR x4 pretrained RGB visual SR",
         "note": "The downloadable multispectral GeoTIFF preserves the Sentinel bands using the geospatial baseline. The AI output is a separate 3-band RGB GeoTIFF. Final DEEPSRM should use a multispectral satellite-trained checkpoint.",
         "download": f"/api/result/{job_id}/download",
@@ -495,44 +555,103 @@ def sentinel_process(req: SentinelProcessRequest):
         "preview": f"/api/result/{job_id}/preview",
         "original_preview": f"/api/result/{job_id}/original-preview",
     }
+def stream_temp_file(path, media_type, filename, delete_after=False):
+    file_path = Path(path)
+
+    if not file_path.exists():
+        raise HTTPException(404, "Result file not found")
+
+    def file_iterator():
+        try:
+            with open(file_path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            if delete_after:
+                delete_temp_file(file_path)
+
+    return StreamingResponse(
+        file_iterator(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
+
 
 @app.get("/api/result/{job_id}/download")
 def download_result(job_id: str):
     job = jobs.get(job_id)
-    if not job:
+
+    if not job or "geotiff_path" not in job:
         raise HTTPException(404, "Result not found")
-    return StreamingResponse(
-        io.BytesIO(job["geotiff"]),
-        media_type="image/tiff",
-        headers={
-            "Content-Disposition":
-            f'attachment; filename="deepsrm_{job_id[:8]}.tif"'
-        },
+
+    path = job["geotiff_path"]
+
+    response = stream_temp_file(
+        path,
+        "image/tiff",
+        f"deepsrm_{job_id[:8]}.tif",
+        delete_after=True
     )
+
+    # Keep the job metadata so the other result endpoints
+    # can still access their files.
+    return response
+
 
 @app.get("/api/result/{job_id}/ai-rgb-download")
 def download_ai_rgb(job_id: str):
     job = jobs.get(job_id)
-    if not job or "ai_rgb" not in job:
+
+    if not job or "ai_rgb_path" not in job:
         raise HTTPException(404, "AI RGB result not found")
-    return StreamingResponse(
-        io.BytesIO(job["ai_rgb"]), media_type="image/tiff",
-        headers={"Content-Disposition": f'attachment; filename="deepsrm_edsr_rgb_{job_id[:8]}.tif"'}
+
+    path = job["ai_rgb_path"]
+
+    response = stream_temp_file(
+        path,
+        "image/tiff",
+        f"deepsrm_edsr_rgb_{job_id[:8]}.tif",
+        delete_after=True
     )
+
+    return response
+
 
 @app.get("/api/result/{job_id}/original-preview")
 def original_preview(job_id: str):
     job = jobs.get(job_id)
-    if not job:
+
+    if not job or "original_preview_path" not in job:
         raise HTTPException(404, "Result not found")
-    return StreamingResponse(io.BytesIO(job["original_preview"]), media_type="image/png")
+
+    path = job["original_preview_path"]
+
+    return stream_temp_file(
+        path,
+        "image/png",
+        f"deepsrm_original_{job_id[:8]}.png"
+    )
+
 
 @app.get("/api/result/{job_id}/preview")
 def preview_result(job_id: str):
     job = jobs.get(job_id)
-    if not job:
+
+    if not job or "preview_path" not in job:
         raise HTTPException(404, "Result not found")
-    return StreamingResponse(io.BytesIO(job["preview"]), media_type="image/png")
+
+    path = job["preview_path"]
+
+    return stream_temp_file(
+        path,
+        "image/png",
+        f"deepsrm_preview_{job_id[:8]}.png"
+    )
 
 @app.post("/api/upload/process")
 async def upload_process(file: UploadFile = File(...)):

@@ -1,6 +1,8 @@
-.env
+﻿.env
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.log
+backend/temp_results/
+backend/models/
