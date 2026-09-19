@@ -136,7 +136,35 @@ def ai_rgb_geotiff(raw_tiff: bytes, scale=4):
             del x
             gc.collect()
 
-            out_bgr = sr.upsample(bgr)
+            # Tile-based EDSR inference to keep peak RAM below Render's
+            # 512 MB limit. Each tile is processed independently and written
+            # directly into the final output array.
+            tile_size = 32
+            h0, w0 = bgr.shape[:2]
+            out_bgr = np.zeros(
+                (h0 * scale, w0 * scale, 3),
+                dtype=np.uint8
+            )
+
+            for y in range(0, h0, tile_size):
+                for x0 in range(0, w0, tile_size):
+                    y1 = min(y + tile_size, h0)
+                    x1 = min(x0 + tile_size, w0)
+
+                    tile = bgr[y:y1, x0:x1]
+                    tile_out = sr.upsample(tile)
+
+                    oh = (y1 - y) * scale
+                    ow = (x1 - x0) * scale
+
+                    out_bgr[
+                        y * scale:y * scale + oh,
+                        x0 * scale:x0 * scale + ow
+                    ] = tile_out[:oh, :ow]
+
+                    del tile
+                    del tile_out
+                    gc.collect()
 
             del bgr
             del sr
