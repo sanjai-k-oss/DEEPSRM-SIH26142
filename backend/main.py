@@ -77,134 +77,125 @@ def cleanup_old_temp_files(max_age_seconds=1800):
     except Exception:
         pass
 
-EDSR_MODEL_URL = "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb"
-EDSR_MODEL_PATH = BASE_DIR / "models" / "EDSR_x4.pb"
+# Super-resolution model selection. Render's 512 MB instance is too small for
+# the EDSR graph, so the default deployment model is FSRCNN-small x4.
+# Set DEEPSRM_SR_MODEL=edsr to use the existing EDSR model locally.
+SR_MODEL_NAME = os.getenv("DEEPSRM_SR_MODEL", "fsrcnn-small").lower().strip()
 
-def ensure_edsr_model():
-    """Download the public pretrained EDSR x4 model on first use."""
-    if EDSR_MODEL_PATH.exists() and EDSR_MODEL_PATH.stat().st_size > 1_000_000:
-        return
-    EDSR_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(EDSR_MODEL_URL, stream=True, timeout=120) as r:
+SR_MODELS = {
+    "edsr": {
+        "url": "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x4.pb",
+        "path": BASE_DIR / "models" / "EDSR_x4.pb",
+        "cv_name": "edsr",
+    },
+    "fsrcnn": {
+        "url": "https://github.com/Saafke/FSRCNN_Tensorflow/raw/master/models/FSRCNN_x4.pb",
+        "path": BASE_DIR / "models" / "FSRCNN_x4.pb",
+        "cv_name": "fsrcnn",
+    },
+    "fsrcnn-small": {
+        "url": "https://github.com/Saafke/FSRCNN_Tensorflow/raw/master/models/FSRCNN-small_x4.pb",
+        "path": BASE_DIR / "models" / "FSRCNN-small_x4.pb",
+        "cv_name": "fsrcnn",
+    },
+}
+
+if SR_MODEL_NAME not in SR_MODELS:
+    SR_MODEL_NAME = "fsrcnn-small"
+
+
+def ensure_sr_model():
+    """Download the selected OpenCV dnn_superres model on first use."""
+    cfg = SR_MODELS[SR_MODEL_NAME]
+    model_path = cfg["path"]
+    if model_path.exists() and model_path.stat().st_size > 1_000:
+        return model_path
+
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(cfg["url"], stream=True, timeout=120) as r:
         r.raise_for_status()
-        with open(EDSR_MODEL_PATH, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
+        with open(model_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=256 * 1024):
                 if chunk:
                     f.write(chunk)
+    return model_path
+
 
 def ai_rgb_geotiff(raw_tiff: bytes, scale=4):
-    """Run a real pretrained EDSR neural SR model on the RGB view.
+    """Run a lightweight pretrained neural SR model on the RGB view.
 
-    This is an AI visual-SR demonstration, not the final multispectral DEEPSRM model.
-    The full multispectral GeoTIFF remains separately available from the Lanczos baseline.
+    Render uses FSRCNN-small by default because its model is dramatically
+    smaller than EDSR and is designed for fast super-resolution inference.
+    EDSR remains available by setting DEEPSRM_SR_MODEL=edsr.
+    This is an AI visual-SR demonstration, not the final multispectral
+    satellite-trained DEEPSRM model.
     """
     import gc
 
-    ensure_edsr_model()
+    model_path = ensure_sr_model()
 
     sr = cv2.dnn_superres.DnnSuperResImpl_create()
-    sr.readModel(str(EDSR_MODEL_PATH))
-    sr.setModel("edsr", scale)
+    sr.readModel(str(model_path))
+    sr.setModel(SR_MODELS[SR_MODEL_NAME]["cv_name"], scale)
 
     with MemoryFile(raw_tiff) as mem:
         with mem.open() as src:
             rgb = src.read([3, 2, 1]).astype(np.float32)
-
             np.nan_to_num(rgb, copy=False)
 
             positives = rgb[rgb > 0]
             p98 = np.percentile(positives, 98) if positives.size else 1.0
-
             del positives
-            gc.collect()
 
-            x = np.clip(
-                rgb / max(p98, 1e-6),
-                0,
-                1
-            )
-
+            x = np.clip(rgb / max(p98, 1e-6), 0, 1)
             del rgb
-            gc.collect()
 
-            bgr = (
-                x[::-1]
-                .transpose(1, 2, 0)
-                * 255
-            ).astype(np.uint8)
-
+            bgr = (x[::-1].transpose(1, 2, 0) * 255).astype(np.uint8)
             del x
             gc.collect()
 
-            # Tile-based EDSR inference to keep peak RAM below Render's
-            # 512 MB limit. Each tile is processed independently and written
-            # directly into the final output array.
             tile_size = 32
             h0, w0 = bgr.shape[:2]
-            out_bgr = np.zeros(
-                (h0 * scale, w0 * scale, 3),
-                dtype=np.uint8
-            )
+            out_bgr = np.zeros((h0 * scale, w0 * scale, 3), dtype=np.uint8)
 
             for y in range(0, h0, tile_size):
                 for x0 in range(0, w0, tile_size):
                     y1 = min(y + tile_size, h0)
                     x1 = min(x0 + tile_size, w0)
-
                     tile = bgr[y:y1, x0:x1]
                     tile_out = sr.upsample(tile)
 
                     oh = (y1 - y) * scale
                     ow = (x1 - x0) * scale
+                    out_bgr[y * scale:y * scale + oh, x0 * scale:x0 * scale + ow] = tile_out[:oh, :ow]
 
-                    out_bgr[
-                        y * scale:y * scale + oh,
-                        x0 * scale:x0 * scale + ow
-                    ] = tile_out[:oh, :ow]
+                    del tile, tile_out
 
-                    del tile
-                    del tile_out
-                    gc.collect()
-
-            del bgr
-            del sr
+            del bgr, sr
             gc.collect()
 
-            out_rgb = (
-                out_bgr[:, :, ::-1]
-                .transpose(2, 0, 1)
-                .astype(np.uint8)
-            )
-
+            out_rgb = out_bgr[:, :, ::-1].transpose(2, 0, 1).astype(np.uint8)
             del out_bgr
             gc.collect()
 
             h, w = out_rgb.shape[1:]
-
             profile = src.profile.copy()
             profile.update(
                 count=3,
                 dtype="uint8",
                 height=h,
                 width=w,
-                transform=src.transform * src.transform.scale(
-                    1 / scale,
-                    1 / scale
-                ),
-                compress="deflate"
+                transform=src.transform * src.transform.scale(1 / scale, 1 / scale),
+                compress="deflate",
             )
 
             result = io.BytesIO()
-
             with rasterio.open(result, "w", **profile) as dst:
                 dst.write(out_rgb)
 
             output = result.getvalue()
-
-            del out_rgb
-            del result
+            del out_rgb, result
             gc.collect()
-
             return output
 def source_preview(raw_tiff: bytes):
     return make_preview_from_geotiff(raw_tiff)
@@ -478,10 +469,10 @@ def make_preview_from_geotiff(raw_tiff: bytes):
 def status():
     return {
         "status": "online",
-        "mode": "real-copernicus-plus-edsr",
+        "mode": "real-copernicus-plus-lightweight-sr",
         "sentinel_stac": STAC_URL,
         "process_api": PROCESS_URL,
-        "neural_model": "EDSR x4 RGB visual SR; multispectral baseline preserved"
+        "neural_model": f"{SR_MODEL_NAME} x4 RGB visual SR; multispectral baseline preserved"
     }
 
 @app.post("/api/sentinel/search")
@@ -533,10 +524,12 @@ def sentinel_process(req: SentinelProcessRequest):
         # multispectral baseline instead of downloading it again.
         multispectral = sr_baseline_geotiff(source, scale=4)
 
+        # Create the original preview before releasing the source.
+        original = source_preview(source)
+
         del source
         gc.collect()
 
-        original = source_preview(ai_rgb)
         enhanced = make_preview_from_geotiff(ai_rgb)
 
         # Save completed results to disk instead of keeping large
@@ -566,17 +559,17 @@ def sentinel_process(req: SentinelProcessRequest):
         "ai_rgb_path": ai_rgb_path,
         "preview_path": preview_path,
         "original_preview_path": original_preview_path,
-        "mode": "edsr-x4-rgb-plus-multispectral-baseline",
+        "mode": f"{SR_MODEL_NAME}-x4-rgb-plus-multispectral-baseline",
     }
 
     gc.collect()
 
     return {
         "id": job_id,
-        "mode": "edsr-x4-rgb-plus-multispectral-baseline",
+        "mode": f"{SR_MODEL_NAME}-x4-rgb-plus-multispectral-baseline",
         "input_resolution": "Sentinel-2 L2A 10m/20m source bands",
         "target_resolution": "4x output grid (2.5m for 10m bands; 5m for 20m bands)",
-        "neural_model": "EDSR x4 pretrained RGB visual SR",
+        "neural_model": f"{SR_MODEL_NAME} x4 pretrained RGB visual SR",
         "note": "The downloadable multispectral GeoTIFF preserves the Sentinel bands using the geospatial baseline. The AI output is a separate 3-band RGB GeoTIFF. Final DEEPSRM should use a multispectral satellite-trained checkpoint.",
         "download": f"/api/result/{job_id}/download",
         "ai_rgb_download": f"/api/result/{job_id}/ai-rgb-download",
@@ -684,26 +677,53 @@ def preview_result(job_id: str):
 @app.post("/api/upload/process")
 async def upload_process(file: UploadFile = File(...)):
     raw = await file.read()
+    job_id = str(uuid.uuid4())
+
     try:
         output = sr_baseline_geotiff(raw, scale=4)
         ai_rgb = ai_rgb_geotiff(raw, scale=4)
         preview = make_preview_from_geotiff(ai_rgb)
         original = source_preview(raw)
-    except Exception:
+
+        # Store large results on disk, matching the Sentinel processing path.
+        geotiff_path = save_temp_result(job_id, "multispectral.tif", output)
+        ai_rgb_path = save_temp_result(job_id, "ai_rgb.tif", ai_rgb)
+        preview_path = save_temp_result(job_id, "preview.png", preview)
+        original_preview_path = save_temp_result(
+            job_id,
+            "original_preview.png",
+            original
+        )
+
+        jobs[job_id] = {
+            "geotiff_path": geotiff_path,
+            "ai_rgb_path": ai_rgb_path,
+            "preview_path": preview_path,
+            "original_preview_path": original_preview_path,
+            "mode": f"{SR_MODEL_NAME}-x4-rgb-plus-multispectral-baseline",
+        }
+
+        del output
+        del ai_rgb
+        del preview
+        del original
+        gc.collect()
+
+    except Exception as exc:
+        gc.collect()
         raise HTTPException(
             400,
-            "Upload must be a readable GeoTIFF for this endpoint."
+            f"Upload must be a readable GeoTIFF for this endpoint: {exc}"
         )
-    job_id = str(uuid.uuid4())
-    jobs[job_id] = {"geotiff": output, "ai_rgb": ai_rgb, "preview": preview, "original_preview": original}
+
     return {
         "id": job_id,
-        "mode": "edsr-x4-rgb-plus-multispectral-baseline",
+        "mode": f"{SR_MODEL_NAME}-x4-rgb-plus-multispectral-baseline",
         "download": f"/api/result/{job_id}/download",
         "ai_rgb_download": f"/api/result/{job_id}/ai-rgb-download",
         "preview": f"/api/result/{job_id}/preview",
         "original_preview": f"/api/result/{job_id}/original-preview",
-        "neural_model": "EDSR x4 pretrained RGB visual SR",
+        "neural_model": f"{SR_MODEL_NAME} x4 pretrained RGB visual SR",
     }
 
 
