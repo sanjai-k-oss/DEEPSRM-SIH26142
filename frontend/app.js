@@ -1,4 +1,4 @@
-const API="http://127.0.0.1:8000";
+const API="https://deepsrm-sih26142.onrender.com";
 
 const steps=[
 ["Scene validation","Checking the selected Sentinel-2 request"],
